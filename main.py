@@ -2,9 +2,7 @@ import streamlit as st
 import random
 import time
 import json
-import pandas as pd
 import threading
-import os
 
 # Load questions from JSON file
 def load_questions():
@@ -15,17 +13,7 @@ def load_questions():
         st.error(f"Error loading questions: {str(e)}")
         return []
 
-# Load or create leaderboard file
-def load_leaderboard():
-    if os.path.exists("leaderboard.xlsx"):
-        return pd.read_excel("leaderboard.xlsx")
-    else:
-        return pd.DataFrame(columns=["Username", "Score"])
-
-def save_leaderboard(df):
-    df.to_excel("leaderboard.xlsx", index=False)
-
-# Thread lock for safe file operations
+# Thread lock for safe operations
 lock = threading.Lock()
 
 # Apply Green & White Theme
@@ -42,30 +30,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# Admin authentication
-ADMIN_CREDENTIALS = {"ECELL": "admin123", "ADMINISECELL": "securepass"}
-
-def admin_login():
-    st.title("🔐 Admin Panel")
-    admin_user = st.text_input("Admin Username")
-    admin_pass = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if ADMIN_CREDENTIALS.get(admin_user) == admin_pass:
-            st.session_state["admin_authenticated"] = True
-            st.success("✅ Login successful!")
-            st.rerun()
-        else:
-            st.error("❌ Invalid credentials")
-
-def view_leaderboard():
-    st.subheader("🏆 Leaderboard")
-    leaderboard = load_leaderboard()
-    if leaderboard.empty:
-        st.write("No leaderboard data available.")
-    else:
-        leaderboard = leaderboard.sort_values(by="Score", ascending=False).reset_index(drop=True)
-        st.dataframe(leaderboard)
 
 def student_quiz():
     st.title("🎓 Quiz Application")
@@ -101,19 +65,6 @@ def student_quiz():
     available_questions = [q for q in questions if q.get("id") not in st.session_state.answered_questions]
     if not available_questions:
         st.write("🎉 You've answered all questions!")
-        if st.button("Submit Score"):
-            with lock:
-                leaderboard = load_leaderboard()
-                new_entry = pd.DataFrame([[st.session_state.username, st.session_state.score]], columns=["Username", "Score"])
-                leaderboard = pd.concat([leaderboard, new_entry], ignore_index=True)
-                save_leaderboard(leaderboard)
-                st.success("✅ Score Submitted!")
-                st.session_state.logged_in = False
-                st.session_state.username = None
-                st.session_state.score = 0
-                st.session_state.answered_questions = set()
-                st.session_state.current_question = None
-                st.rerun()
         return
     
     if st.session_state.current_question is None or st.session_state.current_question.get("id") not in [q.get("id") for q in available_questions]:
@@ -133,29 +84,8 @@ def student_quiz():
             st.error(f"❌ Incorrect! The correct answer is {question.get('answer')}")
         time.sleep(1)
         st.rerun()
-    
-    if st.button("Submit Score"):
-        with lock:
-            leaderboard = load_leaderboard()
-            new_entry = pd.DataFrame([[st.session_state.username, st.session_state.score]], columns=["Username", "Score"])
-            leaderboard = pd.concat([leaderboard, new_entry], ignore_index=True)
-            save_leaderboard(leaderboard)
-            st.success("✅ Score Submitted!")
-            st.session_state.logged_in = False
-            st.session_state.username = None
-            st.session_state.score = 0
-            st.session_state.answered_questions = set()
-            st.session_state.current_question = None
-            st.rerun()
 
 # Page selection
-page = st.sidebar.radio("📌 Select Mode", ["🎓 Student Quiz", "🔐 Admin Panel", "📊 Leaderboard"])
-if page == "🔐 Admin Panel":
-    if not st.session_state.get("admin_authenticated", False):
-        admin_login()
-    else:
-        st.write("Admin functionalities are now managed externally. Modify 'quiz_data.json' directly.")
-elif page == "📊 Leaderboard":
-    view_leaderboard()
-else:
+page = st.sidebar.radio("📌 Select Mode", ["🎓 Student Quiz"])
+if page == "🎓 Student Quiz":
     student_quiz()
