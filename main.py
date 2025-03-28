@@ -103,6 +103,7 @@ def manage_questions():
                 st.write("No leaderboard data available.")
         except sqlite3.OperationalError as e:
             st.error("⚠️ Error fetching leaderboard: " + str(e))
+    conn.close()
 
 def student_quiz():
     st.title("🎓 Quiz Application")
@@ -133,16 +134,17 @@ def student_quiz():
         st.write("🎉 You've answered all questions!")
         if st.button("Submit Score"):
             with lock:
-                cursor.execute("""
-                    INSERT INTO leaderboard (username, score) VALUES (?, ?)
-                    ON CONFLICT(username) DO UPDATE SET score = excluded.score
-                """, (st.session_state.username, st.session_state.score))
-                conn.commit()
-            st.success("✅ Score Submitted!")
+                try:
+                    cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
+                                   (st.session_state.username, st.session_state.score))
+                    conn.commit()
+                    st.success("✅ Score Submitted!")
+                except sqlite3.OperationalError as e:
+                    st.error(f"⚠️ Error submitting score: {str(e)}")
         conn.close()
         return
     
-    if "current_question" not in st.session_state or st.session_state.current_question[0] not in available_questions:
+    if "current_question" not in st.session_state or st.session_state.current_question[0] not in [q[0] for q in available_questions]:
         st.session_state.current_question = random.choice(available_questions)
         st.session_state.answered_questions.add(st.session_state.current_question[0])
     
@@ -162,13 +164,14 @@ def student_quiz():
     
     if st.button("Submit Score"):
         with lock:
-            cursor.execute("""
-                INSERT INTO leaderboard (username, score) VALUES (?, ?)
-                ON CONFLICT(username) DO UPDATE SET score = excluded.score
-            """, (st.session_state.username, st.session_state.score))
-            conn.commit()
-        st.success("✅ Score Submitted!")
-        st.rerun()
+            try:
+                cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
+                               (st.session_state.username, st.session_state.score))
+                conn.commit()
+                st.success("✅ Score Submitted!")
+                st.rerun()
+            except sqlite3.OperationalError as e:
+                st.error(f"⚠️ Error submitting score: {str(e)}")
     
     conn.close()
 
