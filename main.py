@@ -108,13 +108,27 @@ def manage_questions():
 def student_quiz():
     st.title("🎓 Quiz Application")
     
-    # Student Login
+    # Initialize session state keys if they don’t exist
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
     if "username" not in st.session_state:
-        st.session_state.username = st.text_input("📝 Enter your username to start")
-        if st.button("Start Quiz") and st.session_state.username:
+        st.session_state.username = None
+    if "score" not in st.session_state:
+        st.session_state.score = 0
+    if "answered_questions" not in st.session_state:
+        st.session_state.answered_questions = set()
+    if "current_question" not in st.session_state:
+        st.session_state.current_question = None
+
+    # Student Login
+    if not st.session_state.logged_in:
+        username_input = st.text_input("📝 Enter your username to start")
+        if st.button("Start Quiz") and username_input:
+            st.session_state.username = username_input
             st.session_state.logged_in = True
             st.session_state.score = 0
             st.session_state.answered_questions = set()
+            st.session_state.current_question = None
             st.rerun()
         return
     
@@ -139,12 +153,19 @@ def student_quiz():
                                    (st.session_state.username, st.session_state.score))
                     conn.commit()
                     st.success("✅ Score Submitted!")
+                    # Reset quiz state after submission
+                    st.session_state.logged_in = False
+                    st.session_state.username = None
+                    st.session_state.score = 0
+                    st.session_state.answered_questions = set()
+                    st.session_state.current_question = None
+                    st.rerun()
                 except sqlite3.OperationalError as e:
                     st.error(f"⚠️ Error submitting score: {str(e)}")
         conn.close()
         return
     
-    if "current_question" not in st.session_state or st.session_state.current_question[0] not in [q[0] for q in available_questions]:
+    if st.session_state.current_question is None or st.session_state.current_question[0] not in [q[0] for q in available_questions]:
         st.session_state.current_question = random.choice(available_questions)
         st.session_state.answered_questions.add(st.session_state.current_question[0])
     
@@ -169,6 +190,12 @@ def student_quiz():
                                (st.session_state.username, st.session_state.score))
                 conn.commit()
                 st.success("✅ Score Submitted!")
+                # Reset quiz state after submission
+                st.session_state.logged_in = False
+                st.session_state.username = None
+                st.session_state.score = 0
+                st.session_state.answered_questions = set()
+                st.session_state.current_question = None
                 st.rerun()
             except sqlite3.OperationalError as e:
                 st.error(f"⚠️ Error submitting score: {str(e)}")
@@ -178,7 +205,7 @@ def student_quiz():
 # Page selection
 page = st.sidebar.radio("📌 Select Mode", ["🎓 Student Quiz", "🔐 Admin Panel"])
 if page == "🔐 Admin Panel":
-    if not st.session_state.get("admin_authenticated"):
+    if not st.session_state.get("admin_authenticated", False):
         admin_login()
     else:
         manage_questions()
