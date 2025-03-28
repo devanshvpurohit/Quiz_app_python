@@ -98,7 +98,7 @@ def student_quiz():
         st.write("⚠️ No questions available. Please ask admin to add questions to the JSON file.")
         return
     
-    available_questions = [q for q in questions if q["id"] not in st.session_state.answered_questions]
+    available_questions = [q for q in questions if q.get("id") not in st.session_state.answered_questions]
     if not available_questions:
         st.write("🎉 You've answered all questions!")
         if st.button("Submit Score"):
@@ -116,21 +116,21 @@ def student_quiz():
                 st.rerun()
         return
     
-    if st.session_state.current_question is None or st.session_state.current_question["id"] not in [q["id"] for q in available_questions]:
+    if st.session_state.current_question is None or st.session_state.current_question.get("id") not in [q.get("id") for q in available_questions]:
         st.session_state.current_question = random.choice(available_questions)
-        st.session_state.answered_questions.add(st.session_state.current_question["id"])
+        st.session_state.answered_questions.add(st.session_state.current_question.get("id"))
     
     question = st.session_state.current_question
-    st.subheader(question["question"])
-    selected_option = st.radio("🤔 Choose your answer", question["options"], key=f"answer_{question['id']}")
+    st.subheader(question.get("question", "No question available"))
+    selected_option = st.radio("🤔 Choose your answer", question.get("options", []), key=f"answer_{question.get('id')}")
     
     if st.button("Submit Answer"):
-        if selected_option == question["answer"]:
+        if selected_option == question.get("answer"):
             st.success("🎉 Correct!")
             st.balloons()
             st.session_state.score += 1
         else:
-            st.error(f"❌ Incorrect! The correct answer is {question['answer']}")
+            st.error(f"❌ Incorrect! The correct answer is {question.get('answer')}")
         time.sleep(1)
         st.rerun()
     
