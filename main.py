@@ -7,30 +7,54 @@ import os
 
 # Initialize database connection
 def init_db():
-    # Nuke the old database file to start fresh
-    if os.path.exists("quiz.db"):
-        os.remove("quiz.db")
+    db_path = "quiz.db"
+    try:
+        # Check if we can even touch the file
+        if os.path.exists(db_path):
+            st.write("Found existing quiz.db, attempting to nuke it...")
+            try:
+                os.remove(db_path)
+                st.write("Old quiz.db deleted successfully.")
+            except PermissionError:
+                st.error("Permission denied: Can’t delete quiz.db. Check file permissions or run as admin.")
+                raise
+            except Exception as e:
+                st.error(f"Failed to delete quiz.db: {str(e)}")
+                raise
+        
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        st.write("Connected to database, creating tables...")
+        
+        # Split the executescript into separate commands to avoid fuckery
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT,
+                option1 TEXT,
+                option2 TEXT,
+                option3 TEXT,
+                option4 TEXT,
+                answer TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leaderboard (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                score INTEGER
+            )
+        """)
+        conn.commit()
+        st.write("Tables created successfully.")
+        return conn
     
-    conn = sqlite3.connect("quiz.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.executescript("""
-        CREATE TABLE IF NOT EXISTS questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            question TEXT,
-            option1 TEXT,
-            option2 TEXT,
-            option3 TEXT,
-            option4 TEXT,
-            answer TEXT
-        );
-        CREATE TABLE IF NOT EXISTS leaderboard (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            score INTEGER
-        );
-    """)
-    conn.commit()
-    return conn
+    except sqlite3.OperationalError as e:
+        st.error(f"SQLite OperationalError: {str(e)}")
+        raise
+    except Exception as e:
+        st.error(f"Unexpected error in init_db: {str(e)}")
+        raise
 
 conn = init_db()
 lock = threading.Lock()
