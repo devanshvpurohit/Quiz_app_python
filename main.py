@@ -2,6 +2,7 @@ import streamlit as st
 import random
 import time
 import sqlite3
+import threading
 
 # Initialize database connection
 def init_db():
@@ -18,14 +19,16 @@ def init_db():
             answer TEXT
         );
         CREATE TABLE IF NOT EXISTS leaderboard (
-            username TEXT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
             score INTEGER
         );
     """)
     conn.commit()
-    return conn, cursor
+    return conn
 
-conn, cursor = init_db()
+conn = init_db()
+lock = threading.Lock()
 
 # Admin authentication
 ADMIN_CREDENTIALS = {"ECELL": "admin123", "ADMINISECELL": "securepass"}
@@ -43,17 +46,22 @@ def admin_login():
             st.error("Invalid credentials")
 
 def manage_questions():
+    conn = init_db()
+    cursor = conn.cursor()
     action = st.radio("Manage Questions", ["Add Question", "Remove Question", "View Leaderboard"])
+    
     if action == "Add Question":
         with st.form("add_question"):
             q = st.text_input("Enter Question")
             options = [st.text_input(f"Option {i+1}") for i in range(4)]
             answer = st.selectbox("Correct Answer", options)
             if st.form_submit_button("Add Question"):
-                cursor.execute("INSERT INTO questions (question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?)",
-                               (q, *options, answer))
-                conn.commit()
+                with lock:
+                    cursor.execute("INSERT INTO questions (question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?)",
+                                   (q, *options, answer))
+                    conn.commit()
                 st.success("Question Added Successfully!")
+    
     elif action == "Remove Question":
         cursor.execute("SELECT id, question FROM questions")
         questions = cursor.fetchall()
@@ -61,22 +69,30 @@ def manage_questions():
             question_dict = {q[1]: q[0] for q in questions}
             selected_q = st.selectbox("Select Question to Remove", list(question_dict.keys()))
             if st.button("Remove Question"):
-                cursor.execute("DELETE FROM questions WHERE id = ?", (question_dict[selected_q],))
-                conn.commit()
+                with lock:
+                    cursor.execute("DELETE FROM questions WHERE id = ?", (question_dict[selected_q],))
+                    conn.commit()
                 st.success("Question Removed Successfully!")
         else:
             st.write("No questions available to remove.")
+    
     elif action == "View Leaderboard":
         st.subheader("Leaderboard")
-        cursor.execute("SELECT username, score FROM leaderboard ORDER BY score DESC")
-        data = cursor.fetchall()
-        if data:
-            for i, (user, score) in enumerate(data, 1):
-                st.write(f"{i}. {user}: {score} points")
-        else:
-            st.write("No leaderboard data available.")
+        try:
+            cursor.execute("SELECT username, score FROM leaderboard ORDER BY score DESC LIMIT 10")
+            data = cursor.fetchall()
+            if data:
+                for i, (user, score) in enumerate(data, 1):
+                    st.write(f"{i}. {user}: {score} points")
+            else:
+                st.write("No leaderboard data available.")
+        except sqlite3.OperationalError as e:
+            st.error("Error fetching leaderboard: " + str(e))
+    conn.close()
 
 def student_quiz():
+    conn = init_db()
+    cursor = conn.cursor()
     st.title("Quiz Application")
     cursor.execute("SELECT * FROM questions")
     questions = cursor.fetchall()
@@ -85,8 +101,12 @@ def student_quiz():
         return
     if "score" not in st.session_state:
         st.session_state.score = 0
-    if "current_question" not in st.session_state:
-        st.session_state.current_question = random.choice(questions)
+    if "answered_questions" not in st.session_state:
+        st.session_state.answered_questions = set()
+    available_questions = [q for q in questions if q[0] not in st.session_state.answered_questions]
+    if available_questions:
+        st.session_state.current_question = random.choice(available_questions)
+        st.session_state.answered_questions.add(st.session_state.current_question[0])
     question = st.session_state.current_question
     st.subheader(question[1])
     selected_option = st.radio("Choose your answer", question[2:6], key="answer")
@@ -97,14 +117,15 @@ def student_quiz():
             st.session_state.score += 1
         else:
             st.error(f"Incorrect! The correct answer is {question[6]}.")
-        time.sleep(2)
-        st.session_state.current_question = random.choice(questions)
+        time.sleep(1)
         st.rerun()
     username = st.text_input("Enter your name for leaderboard")
-    if st.button("Submit Score"):
-        cursor.execute("INSERT INTO leaderboard (username, score) VALUES (?, ?)", (username, st.session_state.score))
-        conn.commit()
+    if st.button("Submit Score") and username:
+        with lock:
+            cursor.execute("INSERT INTO leaderboard (username, score) VALUES (?, ?) ON CONFLICT(username) DO UPDATE SET score=score+?", (username, st.session_state.score, st.session_state.score))
+            conn.commit()
         st.success("Score Submitted!")
+    conn.close()
 
 # Page selection
 page = st.sidebar.radio("Select Mode", ["Student Quiz", "Admin Panel"])
