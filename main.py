@@ -3,32 +3,14 @@ import random
 import time
 import sqlite3
 import threading
-import os
 
-# Initialize database connection
+# Initialize in-memory database
 def init_db():
-    db_path = "quiz.db"
     try:
-        # Check if we can even touch the file
-        if os.path.exists(db_path):
-            st.write("Found existing quiz.db, attempting to nuke it...")
-            try:
-                os.remove(db_path)
-                st.write("Old quiz.db deleted successfully.")
-            except PermissionError:
-                st.error("Permission denied: Can’t delete quiz.db. Check file permissions or run as admin.")
-                raise
-            except Exception as e:
-                st.error(f"Failed to delete quiz.db: {str(e)}")
-                raise
-        
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(":memory:", check_same_thread=False, timeout=10)
         cursor = conn.cursor()
-        st.write("Connected to database, creating tables...")
-        
-        # Split the executescript into separate commands to avoid fuckery
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS questions (
+            CREATE TABLE questions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 question TEXT,
                 option1 TEXT,
@@ -39,24 +21,26 @@ def init_db():
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS leaderboard (
+            CREATE TABLE leaderboard (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE,
                 score INTEGER
             )
         """)
         conn.commit()
-        st.write("Tables created successfully.")
         return conn
-    
     except sqlite3.OperationalError as e:
-        st.error(f"SQLite OperationalError: {str(e)}")
-        raise
-    except Exception as e:
-        st.error(f"Unexpected error in init_db: {str(e)}")
+        st.error(f"Database initialization failed: {str(e)}")
         raise
 
-conn = init_db()
+# Fake persistence with session state
+if "questions" not in st.session_state:
+    st.session_state.questions = []  # List of tuples: (id, question, opt1, opt2, opt3, opt4, answer)
+if "leaderboard" not in st.session_state:
+    st.session_state.leaderboard = {}  # Dict: {username: score}
+if "db_initialized" not in st.session_state:
+    st.session_state.db_initialized = False
+
 lock = threading.Lock()
 
 # Apply Green & White Theme
@@ -92,6 +76,12 @@ def admin_login():
 def manage_questions():
     conn = init_db()
     cursor = conn.cursor()
+    
+    # Sync session state questions to DB
+    for q in st.session_state.questions:
+        cursor.execute("INSERT INTO questions (id, question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?, ?)", q)
+    conn.commit()
+
     action = st.radio("⚙️ Manage Questions", ["➕ Add Question", "❌ Remove Question", "📊 View Leaderboard"])
     
     if action == "➕ Add Question":
@@ -101,8 +91,13 @@ def manage_questions():
             answer = st.selectbox("✅ Correct Answer", options)
             if st.form_submit_button("Add Question"):
                 with lock:
-                    cursor.execute("INSERT INTO questions (question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?)",
-                                   (q, *options, answer))
+                    # Get next ID
+                    cursor.execute("SELECT MAX(id) FROM questions")
+                    max_id = cursor.fetchone()[0]
+                    new_id = (max_id or 0) + 1
+                    new_question = (new_id, q, *options, answer)
+                    st.session_state.questions.append(new_question)
+                    cursor.execute("INSERT INTO questions (id, question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?, ?)", new_question)
                     conn.commit()
                 st.success("✅ Question Added Successfully!")
     
@@ -114,7 +109,9 @@ def manage_questions():
             selected_q = st.selectbox("🗑 Select Question to Remove", list(question_dict.keys()))
             if st.button("Remove Question"):
                 with lock:
-                    cursor.execute("DELETE FROM questions WHERE id = ?", (question_dict[selected_q],))
+                    q_id = question_dict[selected_q]
+                    cursor.execute("DELETE FROM questions WHERE id = ?", (q_id,))
+                    st.session_state.questions = [q for q in st.session_state.questions if q[0] != q_id]
                     conn.commit()
                 st.success("✅ Question Removed Successfully!")
         else:
@@ -122,22 +119,18 @@ def manage_questions():
     
     elif action == "📊 View Leaderboard":
         st.subheader("🏆 Leaderboard")
-        try:
-            cursor.execute("SELECT username, score FROM leaderboard ORDER BY score DESC LIMIT 10")
-            data = cursor.fetchall()
-            if data:
-                for i, (user, score) in enumerate(data, 1):
-                    st.write(f"**{i}. {user}: {score} points**")
-            else:
-                st.write("No leaderboard data available.")
-        except sqlite3.OperationalError as e:
-            st.error("⚠️ Error fetching leaderboard: " + str(e))
+        if st.session_state.leaderboard:
+            sorted_leaderboard = sorted(st.session_state.leaderboard.items(), key=lambda x: x[1], reverse=True)[:10]
+            for i, (user, score) in enumerate(sorted_leaderboard, 1):
+                st.write(f"**{i}. {user}: {score} points**")
+        else:
+            st.write("No leaderboard data available.")
     conn.close()
 
 def student_quiz():
     st.title("🎓 Quiz Application")
     
-    # Initialize session state keys if they don’t exist
+    # Initialize session state keys
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
     if "username" not in st.session_state:
@@ -161,10 +154,14 @@ def student_quiz():
             st.rerun()
         return
     
-    # Database connection inside function
     conn = init_db()
     cursor = conn.cursor()
     
+    # Sync session state questions to DB
+    for q in st.session_state.questions:
+        cursor.execute("INSERT INTO questions (id, question, option1, option2, option3, option4, answer) VALUES (?, ?, ?, ?, ?, ?, ?)", q)
+    conn.commit()
+
     cursor.execute("SELECT * FROM questions")
     questions = cursor.fetchall()
     if not questions:
@@ -177,20 +174,17 @@ def student_quiz():
         st.write("🎉 You've answered all questions!")
         if st.button("Submit Score"):
             with lock:
-                try:
-                    cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
-                                   (st.session_state.username, st.session_state.score))
-                    conn.commit()
-                    st.success("✅ Score Submitted!")
-                    # Reset quiz state after submission
-                    st.session_state.logged_in = False
-                    st.session_state.username = None
-                    st.session_state.score = 0
-                    st.session_state.answered_questions = set()
-                    st.session_state.current_question = None
-                    st.rerun()
-                except sqlite3.OperationalError as e:
-                    st.error(f"⚠️ Error submitting score: {str(e)}")
+                st.session_state.leaderboard[st.session_state.username] = st.session_state.score
+                cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
+                               (st.session_state.username, st.session_state.score))
+                conn.commit()
+                st.success("✅ Score Submitted!")
+                st.session_state.logged_in = False
+                st.session_state.username = None
+                st.session_state.score = 0
+                st.session_state.answered_questions = set()
+                st.session_state.current_question = None
+                st.rerun()
         conn.close()
         return
     
@@ -214,20 +208,17 @@ def student_quiz():
     
     if st.button("Submit Score"):
         with lock:
-            try:
-                cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
-                               (st.session_state.username, st.session_state.score))
-                conn.commit()
-                st.success("✅ Score Submitted!")
-                # Reset quiz state after submission
-                st.session_state.logged_in = False
-                st.session_state.username = None
-                st.session_state.score = 0
-                st.session_state.answered_questions = set()
-                st.session_state.current_question = None
-                st.rerun()
-            except sqlite3.OperationalError as e:
-                st.error(f"⚠️ Error submitting score: {str(e)}")
+            st.session_state.leaderboard[st.session_state.username] = st.session_state.score
+            cursor.execute("INSERT OR REPLACE INTO leaderboard (username, score) VALUES (?, ?)",
+                           (st.session_state.username, st.session_state.score))
+            conn.commit()
+            st.success("✅ Score Submitted!")
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.session_state.score = 0
+            st.session_state.answered_questions = set()
+            st.session_state.current_question = None
+            st.rerun()
     
     conn.close()
 
