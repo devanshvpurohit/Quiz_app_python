@@ -1,91 +1,81 @@
 import streamlit as st
-import random
-import time
 import json
-import threading
+from datetime import datetime
 
-# Load questions from JSON file
-def load_questions():
-    try:
-        with open("quiz_data.json", "r") as f:
-            return json.load(f)
-    except Exception as e:
-        st.error(f"Error loading questions: {str(e)}")
-        return []
+class QuizApp:
+    def __init__(self, quiz_data_path='quiz_data.json', leaderboard_path='leaderboard.json'):
+        self.quiz_data_path = quiz_data_path
+        self.leaderboard_path = leaderboard_path
+        self.load_quiz_data()
+        
+    def load_quiz_data(self):
+        with open(self.quiz_data_path, 'r') as f:
+            self.quiz_data = json.load(f)
+        
+    def load_leaderboard(self):
+        try:
+            with open(self.leaderboard_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return []
+    
+    def save_leaderboard(self, leaderboard):
+        with open(self.leaderboard_path, 'w') as f:
+            json.dump(leaderboard, f, indent=4)
+    
+    def run_quiz(self):
+        st.title("Quiz Application")
+        
+        # User details
+        username = st.text_input("Enter your name")
+        
+        if not username:
+            st.warning("Please enter your name to start the quiz")
+            return
+        
+        # Quiz logic
+        score = 0
+        questions = self.quiz_data['questions']
+        
+        for i, q in enumerate(questions, 1):
+            st.write(f"Question {i}: {q['question']}")
+            user_answer = st.radio(
+                "Select your answer:", 
+                options=q['options'], 
+                key=f"q{i}"
+            )
+            
+            if user_answer == q['correct_answer']:
+                score += 1
+        
+        # Submit quiz
+        if st.button("Submit Quiz"):
+            # Save to leaderboard
+            leaderboard = self.load_leaderboard()
+            leaderboard.append({
+                "name": username,
+                "score": score,
+                "total_questions": len(questions),
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Sort leaderboard by score (descending)
+            leaderboard = sorted(leaderboard, key=lambda x: x['score'], reverse=True)
+            
+            # Save updated leaderboard
+            self.save_leaderboard(leaderboard)
+            
+            # Display results
+            st.success(f"Quiz completed! Your score: {score}/{len(questions)}")
+            
+            # Show leaderboard
+            st.header("Leaderboard")
+            leaderboard_df = pd.DataFrame(leaderboard)
+            st.dataframe(leaderboard_df[['name', 'score', 'total_questions']])
 
-# Thread lock for safe operations
-lock = threading.Lock()
+def main():
+    quiz_app = QuizApp()
+    quiz_app.run_quiz()
 
-# Apply Green & White Theme
-st.markdown(
-    """
-    <style>
-        body { background-color: white; }
-        .stButton>button { background-color: #28a745; color: white; border-radius: 10px; }
-        .stTextInput>div>div>input { border-radius: 10px; }
-        .stRadio>div>label { color: #28a745; font-weight: bold; }
-        .stSuccess { color: #28a745; font-weight: bold; }
-        .stError { color: red; font-weight: bold; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-def student_quiz():
-    st.title("🎓 Quiz Application")
-    
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "score" not in st.session_state:
-        st.session_state.score = 0
-    if "answered_questions" not in st.session_state:
-        st.session_state.answered_questions = set()
-    if "current_question" not in st.session_state:
-        st.session_state.current_question = None
-
-    if not st.session_state.logged_in:
-        username_input = st.text_input("📝 Enter your username to start")
-        if st.button("Start Quiz") and username_input:
-            st.session_state.username = username_input
-            st.session_state.logged_in = True
-            st.session_state.score = 0
-            st.session_state.answered_questions = set()
-            st.session_state.current_question = None
-            st.rerun()
-        return
-    
-    questions = load_questions()
-    
-    if not questions:
-        st.write("⚠️ No questions available. Please ask admin to add questions to the JSON file.")
-        return
-    
-    available_questions = [q for q in questions if q.get("id") not in st.session_state.answered_questions]
-    if not available_questions:
-        st.write("🎉 You've answered all questions!")
-        return
-    
-    if st.session_state.current_question is None or st.session_state.current_question.get("id") not in [q.get("id") for q in available_questions]:
-        st.session_state.current_question = random.choice(available_questions)
-        st.session_state.answered_questions.add(st.session_state.current_question.get("id"))
-    
-    question = st.session_state.current_question
-    st.subheader(question.get("question", "No question available"))
-    selected_option = st.radio("🤔 Choose your answer", question.get("options", []), key=f"answer_{question.get('id')}")
-    
-    if st.button("Submit Answer"):
-        if selected_option == question.get("answer"):
-            st.success("🎉 Correct!")
-            st.balloons()
-            st.session_state.score += 1
-        else:
-            st.error(f"❌ Incorrect! The correct answer is {question.get('answer')}")
-        time.sleep(1)
-        st.rerun()
-
-# Page selection
-page = st.sidebar.radio("📌 Select Mode", ["🎓 Student Quiz"])
-if page == "🎓 Student Quiz":
-    student_quiz()
+if __name__ == "__main__":
+    main()
