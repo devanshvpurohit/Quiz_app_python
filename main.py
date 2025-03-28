@@ -3,9 +3,14 @@ import random
 import time
 import sqlite3
 import threading
+import os
 
 # Initialize database connection
 def init_db():
+    # Nuke the old database file to start fresh
+    if os.path.exists("quiz.db"):
+        os.remove("quiz.db")
+    
     conn = sqlite3.connect("quiz.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.executescript("""
