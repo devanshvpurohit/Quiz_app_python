@@ -103,11 +103,8 @@ def manage_questions():
                 st.write("No leaderboard data available.")
         except sqlite3.OperationalError as e:
             st.error("⚠️ Error fetching leaderboard: " + str(e))
-    conn.close()
 
 def student_quiz():
-    conn = init_db()
-    cursor = conn.cursor()
     st.title("🎓 Quiz Application")
     
     # Student Login
@@ -115,28 +112,43 @@ def student_quiz():
         st.session_state.username = st.text_input("📝 Enter your username to start")
         if st.button("Start Quiz") and st.session_state.username:
             st.session_state.logged_in = True
+            st.session_state.score = 0
+            st.session_state.answered_questions = set()
             st.rerun()
         return
+    
+    # Database connection inside function
+    conn = init_db()
+    cursor = conn.cursor()
     
     cursor.execute("SELECT * FROM questions")
     questions = cursor.fetchall()
     if not questions:
         st.write("⚠️ No questions available. Please ask admin to add questions.")
+        conn.close()
         return
     
-    if "score" not in st.session_state:
-        st.session_state.score = 0
-    if "answered_questions" not in st.session_state:
-        st.session_state.answered_questions = set()
-    
     available_questions = [q for q in questions if q[0] not in st.session_state.answered_questions]
-    if available_questions:
+    if not available_questions:
+        st.write("🎉 You've answered all questions!")
+        if st.button("Submit Score"):
+            with lock:
+                cursor.execute("""
+                    INSERT INTO leaderboard (username, score) VALUES (?, ?)
+                    ON CONFLICT(username) DO UPDATE SET score = excluded.score
+                """, (st.session_state.username, st.session_state.score))
+                conn.commit()
+            st.success("✅ Score Submitted!")
+        conn.close()
+        return
+    
+    if "current_question" not in st.session_state or st.session_state.current_question[0] not in available_questions:
         st.session_state.current_question = random.choice(available_questions)
         st.session_state.answered_questions.add(st.session_state.current_question[0])
     
     question = st.session_state.current_question
     st.subheader(question[1])
-    selected_option = st.radio("🤔 Choose your answer", question[2:6], key="answer")
+    selected_option = st.radio("🤔 Choose your answer", question[2:6], key=f"answer_{question[0]}")
     
     if st.button("Submit Answer"):
         if selected_option == question[6]:
@@ -152,10 +164,12 @@ def student_quiz():
         with lock:
             cursor.execute("""
                 INSERT INTO leaderboard (username, score) VALUES (?, ?)
-                ON CONFLICT(username) DO UPDATE SET score=score+?
-            """, (st.session_state.username, st.session_state.score, st.session_state.score))
+                ON CONFLICT(username) DO UPDATE SET score = excluded.score
+            """, (st.session_state.username, st.session_state.score))
             conn.commit()
         st.success("✅ Score Submitted!")
+        st.rerun()
+    
     conn.close()
 
 # Page selection
