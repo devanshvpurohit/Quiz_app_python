@@ -1,4 +1,4 @@
 streamlit
 pandas
-hashlib
-bcrypt
+gspread
+oauth2client
