@@ -1,119 +1,74 @@
 import streamlit as st
 import pandas as pd
-import time
-import requests
-from streamlit_gsheets import GSheetsConnection
+import datetime
+import socket
+import os
 
-# ----- CONFIG ----- #
-st.set_page_config(page_title="IPL Quiz 2025", page_icon="🏏", layout="centered")
-st.title("🏏 IPL Quiz 2025")
-
-# ----- HARDCODED GOOGLE SHEET URL ----- #
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1csaETbJIYJPW9amvGB9rq0uYEK7sH83Ueq8UUjpp0GU"
-
-conn = st.experimental_connection("gsheets", type=GSheetsConnection, kwargs={
-    "spreadsheet": SPREADSHEET_URL
-})
-
-# Load existing responses
-existing_data = conn.read(worksheet="Responses", usecols=list(range(8)), ttl=5)
-existing_data = existing_data.dropna(how="all")
-
-# ----- QUIZ QUESTIONS ----- #
-QUESTIONS = [
+# ---- Hardcoded Questions ----
+questions = [
     {
-        "question": "Which team won the IPL in 2024?",
-        "options": ["Chennai Super Kings", "Mumbai Indians", "Kolkata Knight Riders", "Gujarat Titans"],
-        "answer": "Kolkata Knight Riders"
+        "question": "What is the capital of France?",
+        "options": ["A. Berlin", "B. London", "C. Paris", "D. Madrid"],
+        "answer": "C"
     },
     {
-        "question": "Who was the highest run scorer in IPL 2024?",
-        "options": ["Virat Kohli", "Shubman Gill", "Jos Buttler", "David Warner"],
-        "answer": "Shubman Gill"
+        "question": "Which number is a prime?",
+        "options": ["A. 4", "B. 6", "C. 9", "D. 7"],
+        "answer": "D"
     },
     {
-        "question": "Who took the most wickets in IPL 2024?",
-        "options": ["Jasprit Bumrah", "Yuzvendra Chahal", "Mohammed Shami", "Rashid Khan"],
-        "answer": "Mohammed Shami"
-    },
-    {
-        "question": "Which stadium hosted the final match?",
-        "options": ["Wankhede", "Narendra Modi Stadium", "Chinnaswamy", "Eden Gardens"],
-        "answer": "Narendra Modi Stadium"
+        "question": "Who wrote Hamlet?",
+        "options": ["A. Dickens", "B. Tolkien", "C. Shakespeare", "D. Rowling"],
+        "answer": "C"
     }
 ]
 
-# ----- SESSION STATE SETUP ----- #
-if "step" not in st.session_state:
-    st.session_state.step = 0
-if "responses" not in st.session_state:
-    st.session_state.responses = []
-if "name" not in st.session_state:
-    st.session_state.name = ""
-if "start_time" not in st.session_state:
-    st.session_state.start_time = None
-if "ip_address" not in st.session_state:
-    try:
-        st.session_state.ip_address = requests.get("https://api.ipify.org").text
-    except:
-        st.session_state.ip_address = "Unavailable"
+# ---- Streamlit UI ----
+st.set_page_config(page_title="Quiz App", layout="centered")
+st.title("🧠 Real-Time Quiz App")
 
-# ----- START PAGE ----- #
-if st.session_state.step == 0:
-    name = st.text_input("Enter your full name to start the quiz*")
+name = st.text_input("Enter your name to begin:")
 
-    if st.button("Start Quiz"):
-        if not name.strip():
-            st.warning("Please enter your name.")
-        elif existing_data["Name"].str.lower().str.strip().eq(name.strip().lower()).any():
-            st.error("You have already submitted the quiz.")
-        else:
-            st.session_state.name = name.strip()
-            st.session_state.step = 1
-            st.session_state.start_time = time.time()
+if name:
+    with st.form("quiz_form"):
+        user_answers = []
+        for idx, q in enumerate(questions):
+            st.subheader(f"Q{idx + 1}: {q['question']}")
+            choice = st.radio("Choose one:", q["options"], key=f"q_{idx}")
+            user_answers.append(choice[0])  # Save only A/B/C/D
 
-# ----- QUESTION FLOW ----- #
-elif 1 <= st.session_state.step <= len(QUESTIONS):
-    q_idx = st.session_state.step - 1
-    question = QUESTIONS[q_idx]
+        submitted = st.form_submit_button("Submit")
 
-    st.subheader(f"Question {st.session_state.step}")
-    answer = st.radio(question["question"], question["options"], index=None)
+        if submitted:
+            correct_answers = [q["answer"] for q in questions]
+            score = sum([ua == ca for ua, ca in zip(user_answers, correct_answers)])
+            st.success(f"✅ {name}, your score is {score}/{len(questions)}")
 
-    if st.button("Next"):
-        if answer is None:
-            st.warning("Please select an answer.")
-        else:
-            st.session_state.responses.append(answer)
-            st.session_state.step += 1
+            time_taken = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ip_address = st.experimental_user().get("ip", "N/A")  # fallback if local IP fails
 
-# ----- SUBMIT QUIZ ----- #
+            record = {
+                "Name": name,
+                "Score": score,
+                "Answers": str(user_answers),
+                "Time": time_taken,
+                "IP": ip_address
+            }
+
+            # Save record to Excel
+            file = "leaderboard.xlsx"
+            if os.path.exists(file):
+                df = pd.read_excel(file)
+                df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
+            else:
+                df = pd.DataFrame([record])
+            df.to_excel(file, index=False)
+
+# ---- Leaderboard ----
+st.markdown("### 📊 Leaderboard")
+if os.path.exists("leaderboard.xlsx"):
+    leaderboard = pd.read_excel("leaderboard.xlsx")
+    leaderboard_sorted = leaderboard.sort_values(by="Score", ascending=False).reset_index(drop=True)
+    st.dataframe(leaderboard_sorted)
 else:
-    end_time = time.time()
-    time_taken = round(end_time - st.session_state.start_time, 2)
-
-    score = sum(
-        user_ans == q["answer"]
-        for user_ans, q in zip(st.session_state.responses, QUESTIONS)
-    )
-
-    new_row = pd.DataFrame([{
-        "Name": st.session_state.name,
-        "Q1": st.session_state.responses[0],
-        "Q2": st.session_state.responses[1],
-        "Q3": st.session_state.responses[2],
-        "Q4": st.session_state.responses[3],
-        "Score": score,
-        "IP": st.session_state.ip_address,
-        "TimeTakenSeconds": time_taken,
-    }])
-
-    updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-    conn.update(worksheet="Responses", data=updated_df)
-
-    st.success(f"🎉 Quiz Submitted! You scored {score}/4.")
-    st.info(f"⏱ Time Taken: {time_taken} seconds")
-    st.balloons()
-
-    for key in ["step", "responses", "name", "start_time", "ip_address"]:
-        del st.session_state[key]
+    st.info("No submissions yet!")
