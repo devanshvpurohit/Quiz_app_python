@@ -1,74 +1,96 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import time
 import socket
-import os
+from io import StringIO
 
-# ---- Hardcoded Questions ----
+# === CONFIG ===
+ZOHO_SHEET_CSV_URL = "https://sheet.zohopublic.in/sheet/published/45a1p3273242b4e624babae2470ec234ac962.csv"
+
+# === QUIZ QUESTIONS ===
 questions = [
     {
-        "question": "What is the capital of France?",
-        "options": ["A. Berlin", "B. London", "C. Paris", "D. Madrid"],
-        "answer": "C"
+        "question": "Who won the IPL 2023?",
+        "options": ["Gujarat Titans", "CSK", "RCB", "MI"],
+        "answer": "CSK"
     },
     {
-        "question": "Which number is a prime?",
-        "options": ["A. 4", "B. 6", "C. 9", "D. 7"],
-        "answer": "D"
+        "question": "Who has the most runs in IPL history?",
+        "options": ["Virat Kohli", "Rohit Sharma", "David Warner", "Suresh Raina"],
+        "answer": "Virat Kohli"
     },
     {
-        "question": "Who wrote Hamlet?",
-        "options": ["A. Dickens", "B. Tolkien", "C. Shakespeare", "D. Rowling"],
-        "answer": "C"
+        "question": "Who took the first hat-trick in IPL?",
+        "options": ["Amit Mishra", "Makhaya Ntini", "Lakshmipathy Balaji", "Shane Warne"],
+        "answer": "Lakshmipathy Balaji"
     }
 ]
 
-# ---- Streamlit UI ----
-st.set_page_config(page_title="Quiz App", layout="centered")
-st.title("🧠 Real-Time Quiz App")
+# === IP Helper ===
+def get_ip():
+    return socket.gethostbyname(socket.gethostname())
 
-name = st.text_input("Enter your name to begin:")
+# === Leaderboard Loader ===
+@st.cache_data(ttl=60)
+def load_leaderboard():
+    df = pd.read_csv(ZOHO_SHEET_CSV_URL)
+    df = df.sort_values(by="Score", ascending=False).head(10)
+    return df
 
-if name:
-    with st.form("quiz_form"):
-        user_answers = []
-        for idx, q in enumerate(questions):
-            st.subheader(f"Q{idx + 1}: {q['question']}")
-            choice = st.radio("Choose one:", q["options"], key=f"q_{idx}")
-            user_answers.append(choice[0])  # Save only A/B/C/D
+# === Streamlit App ===
+st.set_page_config(page_title="IPL Quiz", layout="centered")
+st.title("🏏 IPL Quiz App")
 
-        submitted = st.form_submit_button("Submit")
+menu = st.sidebar.radio("Navigation", ["Take Quiz", "Leaderboard", "Export My Result"])
 
-        if submitted:
-            correct_answers = [q["answer"] for q in questions]
-            score = sum([ua == ca for ua, ca in zip(user_answers, correct_answers)])
-            st.success(f"✅ {name}, your score is {score}/{len(questions)}")
+# === QUIZ PAGE ===
+if menu == "Take Quiz":
+    name = st.text_input("Enter your full name")
+    if name:
+        if st.button("Start Quiz"):
+            score = 0
+            start_time = time.time()
 
-            time_taken = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ip_address = st.experimental_user().get("ip", "N/A")  # fallback if local IP fails
+            for idx, q in enumerate(questions):
+                st.subheader(f"Q{idx + 1}. {q['question']}")
+                answer = st.radio("Your Answer:", q["options"], key=idx)
+                if answer == q["answer"]:
+                    score += 1
 
-            record = {
-                "Name": name,
-                "Score": score,
-                "Answers": str(user_answers),
-                "Time": time_taken,
-                "IP": ip_address
-            }
+            end_time = time.time()
+            time_taken = round(end_time - start_time, 2)
+            ip = get_ip()
 
-            # Save record to Excel
-            file = "leaderboard.xlsx"
-            if os.path.exists(file):
-                df = pd.read_excel(file)
-                df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
-            else:
-                df = pd.DataFrame([record])
-            df.to_excel(file, index=False)
+            st.success(f"✅ Score: {score}/{len(questions)}")
+            st.info(f"⏱️ Time Taken: {time_taken} sec")
 
-# ---- Leaderboard ----
-st.markdown("### 📊 Leaderboard")
-if os.path.exists("leaderboard.xlsx"):
-    leaderboard = pd.read_excel("leaderboard.xlsx")
-    leaderboard_sorted = leaderboard.sort_values(by="Score", ascending=False).reset_index(drop=True)
-    st.dataframe(leaderboard_sorted)
-else:
-    st.info("No submissions yet!")
+            if "results" not in st.session_state:
+                st.session_state.results = []
+
+            if st.button("Save My Result"):
+                st.session_state.results.append({
+                    "Name": name,
+                    "Score": score,
+                    "IP": ip,
+                    "TimeTaken": time_taken
+                })
+                st.success("Result saved locally. Go to 'Export My Result' to download it.")
+
+# === LEADERBOARD PAGE ===
+elif menu == "Leaderboard":
+    st.subheader("🏆 Top 10 Performers")
+    try:
+        leaderboard = load_leaderboard()
+        st.dataframe(leaderboard)
+    except Exception as e:
+        st.error("Failed to load leaderboard. Please check the sheet URL.")
+
+# === EXPORT RESULTS ===
+elif menu == "Export My Result":
+    st.subheader("📤 Export Your Score")
+    if "results" in st.session_state and st.session_state.results:
+        df = pd.DataFrame(st.session_state.results)
+        csv = df.to_csv(index=False)
+        st.download_button("Download Your Result CSV", csv, "my_ipl_quiz_result.csv", "text/csv")
+    else:
+        st.info("No result found in session. Take the quiz first.")
