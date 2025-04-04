@@ -1,19 +1,25 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import time
 import requests
+from streamlit_gsheets import GSheetsConnection
 
-# Page setup
+# ----- CONFIG ----- #
 st.set_page_config(page_title="IPL Quiz 2025", page_icon="🏏", layout="centered")
 st.title("🏏 IPL Quiz 2025")
 
-# Connect to Google Sheets
-conn = st.experimental_connection("gsheets", type=GSheetsConnection)
+# ----- HARDCODED GOOGLE SHEET URL ----- #
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1csaETbJIYJPW9amvGB9rq0uYEK7sH83Ueq8UUjpp0GU"
+
+conn = st.experimental_connection("gsheets", type=GSheetsConnection, kwargs={
+    "spreadsheet": SPREADSHEET_URL
+})
+
+# Load existing responses
 existing_data = conn.read(worksheet="Responses", usecols=list(range(8)), ttl=5)
 existing_data = existing_data.dropna(how="all")
 
-# IPL Quiz Questions & Answers
+# ----- QUIZ QUESTIONS ----- #
 QUESTIONS = [
     {
         "question": "Which team won the IPL in 2024?",
@@ -37,7 +43,7 @@ QUESTIONS = [
     }
 ]
 
-# Session state init
+# ----- SESSION STATE SETUP ----- #
 if "step" not in st.session_state:
     st.session_state.step = 0
 if "responses" not in st.session_state:
@@ -52,7 +58,7 @@ if "ip_address" not in st.session_state:
     except:
         st.session_state.ip_address = "Unavailable"
 
-# Start page
+# ----- START PAGE ----- #
 if st.session_state.step == 0:
     name = st.text_input("Enter your full name to start the quiz*")
 
@@ -66,12 +72,12 @@ if st.session_state.step == 0:
             st.session_state.step = 1
             st.session_state.start_time = time.time()
 
-# Question loop
+# ----- QUESTION FLOW ----- #
 elif 1 <= st.session_state.step <= len(QUESTIONS):
     q_idx = st.session_state.step - 1
     question = QUESTIONS[q_idx]
 
-    st.subheader(f"Question {st.session_state.step}:")
+    st.subheader(f"Question {st.session_state.step}")
     answer = st.radio(question["question"], question["options"], index=None)
 
     if st.button("Next"):
@@ -81,7 +87,7 @@ elif 1 <= st.session_state.step <= len(QUESTIONS):
             st.session_state.responses.append(answer)
             st.session_state.step += 1
 
-# Submit results
+# ----- SUBMIT QUIZ ----- #
 else:
     end_time = time.time()
     time_taken = round(end_time - st.session_state.start_time, 2)
@@ -109,6 +115,5 @@ else:
     st.info(f"⏱ Time Taken: {time_taken} seconds")
     st.balloons()
 
-    # Reset session state
     for key in ["step", "responses", "name", "start_time", "ip_address"]:
         del st.session_state[key]
