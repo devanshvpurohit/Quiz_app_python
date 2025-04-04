@@ -1,50 +1,114 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import time
+import requests
 
-# 🔥 Fully Hardcoded Google Service Account Credentials
-creds_json = {
-    "type": "service_account",
-    "project_id": "ecell-455715",
-    "private_key_id": "abc1234567890xyz",  # 🔹 Replace with actual private_key_id
-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B...\n-----END PRIVATE KEY-----\n",  # 🔹 Replace with actual private_key
-    "client_email": "service-account@ecell-455715.iam.gserviceaccount.com",  # 🔹 Replace with actual client_email
-    "client_id": "111134701029860426257",  # ✅ Hardcoded Client ID
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/service-account@ecell-455715.iam.gserviceaccount.com"  # ✅ Hardcoded Cert URL
-}
+# Page setup
+st.set_page_config(page_title="IPL Quiz 2025", page_icon="🏏", layout="centered")
+st.title("🏏 IPL Quiz 2025")
 
-# ✅ Authenticate with Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
-client = gspread.authorize(credentials)
+# Connect to Google Sheets
+conn = st.experimental_connection("gsheets", type=GSheetsConnection)
+existing_data = conn.read(worksheet="Responses", usecols=list(range(8)), ttl=5)
+existing_data = existing_data.dropna(how="all")
 
-# ✅ Fetch IPL Quiz Questions from Google Sheets
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1csaETbJIYJPW9amvGB9rq0uYEK7sH83Ueq8UUjpp0GU/edit#gid=0"
-sheet = client.open_by_url(SHEET_URL).sheet1
-df = pd.DataFrame(sheet.get_all_records())
+# IPL Quiz Questions & Answers
+QUESTIONS = [
+    {
+        "question": "Which team won the IPL in 2024?",
+        "options": ["Chennai Super Kings", "Mumbai Indians", "Kolkata Knight Riders", "Gujarat Titans"],
+        "answer": "Kolkata Knight Riders"
+    },
+    {
+        "question": "Who was the highest run scorer in IPL 2024?",
+        "options": ["Virat Kohli", "Shubman Gill", "Jos Buttler", "David Warner"],
+        "answer": "Shubman Gill"
+    },
+    {
+        "question": "Who took the most wickets in IPL 2024?",
+        "options": ["Jasprit Bumrah", "Yuzvendra Chahal", "Mohammed Shami", "Rashid Khan"],
+        "answer": "Mohammed Shami"
+    },
+    {
+        "question": "Which stadium hosted the final match?",
+        "options": ["Wankhede", "Narendra Modi Stadium", "Chinnaswamy", "Eden Gardens"],
+        "answer": "Narendra Modi Stadium"
+    }
+]
 
-# ✅ Streamlit Quiz App
-st.title("🏏 IPL Quiz")
+# Session state init
+if "step" not in st.session_state:
+    st.session_state.step = 0
+if "responses" not in st.session_state:
+    st.session_state.responses = []
+if "name" not in st.session_state:
+    st.session_state.name = ""
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+if "ip_address" not in st.session_state:
+    try:
+        st.session_state.ip_address = requests.get("https://api.ipify.org").text
+    except:
+        st.session_state.ip_address = "Unavailable"
 
-if df.empty:
-    st.error("⚠️ No questions found in the Google Sheet!")
+# Start page
+if st.session_state.step == 0:
+    name = st.text_input("Enter your full name to start the quiz*")
+
+    if st.button("Start Quiz"):
+        if not name.strip():
+            st.warning("Please enter your name.")
+        elif existing_data["Name"].str.lower().str.strip().eq(name.strip().lower()).any():
+            st.error("You have already submitted the quiz.")
+        else:
+            st.session_state.name = name.strip()
+            st.session_state.step = 1
+            st.session_state.start_time = time.time()
+
+# Question loop
+elif 1 <= st.session_state.step <= len(QUESTIONS):
+    q_idx = st.session_state.step - 1
+    question = QUESTIONS[q_idx]
+
+    st.subheader(f"Question {st.session_state.step}:")
+    answer = st.radio(question["question"], question["options"], index=None)
+
+    if st.button("Next"):
+        if answer is None:
+            st.warning("Please select an answer.")
+        else:
+            st.session_state.responses.append(answer)
+            st.session_state.step += 1
+
+# Submit results
 else:
-    score = 0
-    total_questions = len(df)
+    end_time = time.time()
+    time_taken = round(end_time - st.session_state.start_time, 2)
 
-    for index, row in df.iterrows():
-        question = row["Question"]
-        options = [row["Option1"], row["Option2"], row["Option3"], row["Option4"]]
-        correct_answer = row["Answer"]
+    score = sum(
+        user_ans == q["answer"]
+        for user_ans, q in zip(st.session_state.responses, QUESTIONS)
+    )
 
-        user_answer = st.radio(question, options, key=index)
+    new_row = pd.DataFrame([{
+        "Name": st.session_state.name,
+        "Q1": st.session_state.responses[0],
+        "Q2": st.session_state.responses[1],
+        "Q3": st.session_state.responses[2],
+        "Q4": st.session_state.responses[3],
+        "Score": score,
+        "IP": st.session_state.ip_address,
+        "TimeTakenSeconds": time_taken,
+    }])
 
-        if user_answer == correct_answer:
-            score += 1
+    updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+    conn.update(worksheet="Responses", data=updated_df)
 
-    if st.button("Submit Quiz"):
-        st.success(f"✅ Your Score: {score}/{total_questions}")
+    st.success(f"🎉 Quiz Submitted! You scored {score}/4.")
+    st.info(f"⏱ Time Taken: {time_taken} seconds")
+    st.balloons()
+
+    # Reset session state
+    for key in ["step", "responses", "name", "start_time", "ip_address"]:
+        del st.session_state[key]
